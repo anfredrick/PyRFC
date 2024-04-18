@@ -502,6 +502,12 @@ class FunctionDescription(object):
 # CLIENT CONNECTION
 ################################################################################
 
+# global information about client callbacks
+# "function_name": {"funcDescHandle": FunctionDescription object,
+#                   "callback": Python function,
+#                   "client": client object)
+callback_functions = {}
+
 
 cdef class Connection:
     """A connection to an SAP backend system
@@ -860,6 +866,39 @@ cdef class Connection:
         if not funcDesc:
             self._error(&errorInfo)
         return wrapFunctionDescription(funcDesc)
+
+    def add_callback_function(self, func_name, callback):
+        """
+        Installs a callback function (client).
+
+        :param func_name: ABAP remote function module name
+        :type func_name: string
+
+        :param callback: A callback function that implements the logic.
+            The function must accept a ``request_context`` parameter and
+            all IMPORT, CHANGING, and TABLE parameters of the given
+            ``func_desc``.
+        :raises: :exc:`RFCError` if a function with the name given is already
+            installed.
+        """
+        global callback_functions
+        if func_name in callback_functions:
+            raise RFCError(f"Client callback function '{func_name}' already installed.")
+
+        cdef RFC_ERROR_INFO errorInfo
+        cdef RFC_ABAP_NAME funcName = fillString(func_name)
+        cdef RFC_FUNCTION_DESC_HANDLE func_desc_handle = RfcGetFunctionDesc(self._handle, funcName, &errorInfo)
+        if errorInfo.code != RFC_OK:
+            raise wrapError(&errorInfo)
+
+        callback_functions[func_name] = {
+            "func_desc_handle": <uintptr_t>func_desc_handle,
+            "callback": callback,
+            "client": self
+        }
+        
+        rc = RfcInstallServerFunction(NULL, func_desc_handle, genericClientCallbackHandler, &errorInfo);
+        
 
     def call(self, func_name, options=None, **params):
         """
@@ -1573,6 +1612,42 @@ cdef get_server_context(RFC_CONNECTION_HANDLE rfcHandle, RFC_ERROR_INFO* serverE
     except Exception as ex:
         _server_log(origin, "error", ex)
         return None
+
+cdef RFC_RC genericClientCallbackHandler(RFC_CONNECTION_HANDLE rfcHandle, RFC_FUNCTION_HANDLE funcHandle, RFC_ERROR_INFO* serverErrorInfo) noexcept with gil:
+    cdef RFC_RC rc
+    cdef RFC_ERROR_INFO errorInfo
+    cdef RFC_ATTRIBUTES attributes
+    cdef RFC_FUNCTION_DESC_HANDLE funcDesc
+    cdef RFC_ABAP_NAME funcName
+
+    global callback_functions
+    origin = "genericClientCallbackHandler"
+
+
+    funcDesc = RfcDescribeFunction(funcHandle, NULL)
+    RfcGetFunctionName(funcDesc, funcName, NULL)
+
+    func_name = wrapString(funcName)
+    if func_name not in callback_functions:
+        #_server_log(origin, f"error: No metadata found for function '{function_name}'")
+        return RFC_NOT_FOUND
+
+    func_data = callback_functions[func_name]
+    callback = func_data['callback']
+    clientObj = func_data['client']
+    print(clientObj)
+    #print(clientObj.bconfig)
+    # func_desc = func_data['func_desc_handle']
+
+    # Filter out variables that are of direction u'RFC_EXPORT'
+    # (these will be set by the callback function)
+    func_handle_variables = functionContainerGet(funcDesc, funcHandle, RFC_EXPORT, 0)
+
+    # Invoke callback function
+    result = callback(None, **func_handle_variables)
+    
+    return RFC_OK
+
 
 cdef RFC_RC genericHandler(RFC_CONNECTION_HANDLE rfcHandle, RFC_FUNCTION_HANDLE funcHandle, RFC_ERROR_INFO* serverErrorInfo) noexcept with gil:
     cdef RFC_RC rc

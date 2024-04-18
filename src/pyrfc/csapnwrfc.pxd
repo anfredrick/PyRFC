@@ -322,6 +322,8 @@ cdef extern from "sapnwrfc.h":
     RFC_RC RfcInvoke(RFC_CONNECTION_HANDLE rfcHandle, RFC_FUNCTION_HANDLE funcHandle, RFC_ERROR_INFO *errorInfo) nogil
     RFC_RC RfcSetParameterActive(RFC_FUNCTION_HANDLE funcHandle, SAP_UC *paramName, int isActive, RFC_ERROR_INFO *errorInfo)
 
+    RFC_RC RfcInstallServerFunction(SAP_UC *sysId, RFC_FUNCTION_DESC_HANDLE funcDescHandle, RFC_SERVER_FUNCTION callbackFunction, RFC_ERROR_INFO *errorInfo)
+
     SAP_UC *RfcGetVersion(unsigned *majorVersion, unsigned *minorVersion, unsigned *patchLevel)
 
     SAP_UC *RfcGetRcAsString(RFC_RC rc)
